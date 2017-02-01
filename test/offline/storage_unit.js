@@ -63,7 +63,8 @@ describe('Storage', function() {
             language: '',
             width: 1920,
             height: 1080,
-            hasOutputRestrictions: false
+            frameRate: 24,
+            codecs: 'avc1.4d401f'
           },
           {
             id: 1,
@@ -72,7 +73,8 @@ describe('Storage', function() {
             language: 'en',
             width: null,
             height: null,
-            hasOutputRestrictions: false
+            frameRate: undefined,
+            codecs: 'vorbis'
           }
         ]
       }],
@@ -103,7 +105,8 @@ describe('Storage', function() {
         kind: null,
         width: 1920,
         height: 1080,
-        hasOutputRestrictions: false
+        frameRate: 24,
+        codecs: 'avc1.4d401f'
       },
       {
         id: 1,
@@ -114,7 +117,8 @@ describe('Storage', function() {
         kind: null,
         width: null,
         height: null,
-        hasOutputRestrictions: false
+        frameRate: undefined,
+        codecs: 'vorbis'
       }
     ];
     Promise
@@ -144,11 +148,16 @@ describe('Storage', function() {
   });
 
   describe('store', function() {
+    var originalWarning;
     var manifest;
     var tracks;
     var drmEngine;
     var stream1Index;
     var stream2Index;
+
+    beforeAll(function() {
+      originalWarning = shaka.log.warning;
+    });
 
     beforeEach(function() {
       drmEngine = new shaka.test.FakeDrmEngine();
@@ -189,6 +198,10 @@ describe('Storage', function() {
       stream2.getSegmentReference = stream2Index.get.bind(stream2Index);
     });
 
+    afterAll(function() {
+      shaka.log.warning = originalWarning;
+    });
+
     it('stores basic manifests', function(done) {
       var originalUri = 'fake://foobar';
       var appData = {tools: ['Google', 'StackOverflow'], volume: 11};
@@ -202,6 +215,36 @@ describe('Storage', function() {
             expect(data.size).toEqual(0);
             expect(data.tracks).toEqual(tracks);
             expect(data.appMetadata).toEqual(appData);
+          })
+          .catch(fail)
+          .then(done);
+    });
+
+    it('gives warning if storing tracks with the same type', function(done) {
+      manifest = new shaka.test.ManifestGenerator()
+          .setPresentationDuration(20)
+          .addPeriod(0)
+            .addStreamSet('audio')
+              .language('en')
+              .addStream(0).bandwidth(80)
+            .addStreamSet('audio')
+              .language('en')
+              .addStream(1).bandwidth(160)
+          .build();
+
+      // Store every stream.
+      storage.configure({
+        trackSelectionCallback: function(tracks) {
+          return tracks;
+        }
+      });
+
+      var warning = jasmine.createSpy('shaka.log.warning');
+      shaka.log.warning = warning;
+      storage.store('')
+          .then(function(data) {
+            expect(data).toBeTruthy();
+            expect(warning).toHaveBeenCalled();
           })
           .catch(fail)
           .then(done);
@@ -406,6 +449,42 @@ describe('Storage', function() {
             })
             .catch(fail)
             .then(done);
+      });
+
+      it('downloads different content types in parallel', function(done) {
+        netEngine.setResponseMap({
+          'fake:0': new ArrayBuffer(5),
+          'fake:1': new ArrayBuffer(7)
+        });
+
+        stream1Index.merge([
+          new SegmentReference(0, 0, 1, makeUris('fake:0'), 0, null),
+          new SegmentReference(1, 1, 2, makeUris('fake:1'), 0, null),
+          new SegmentReference(2, 2, 3, makeUris('fake:1'), 0, null)
+        ]);
+        stream2Index.merge([
+          new SegmentReference(0, 0, 1, makeUris('fake:1'), 0, null),
+          new SegmentReference(1, 1, 2, makeUris('fake:0'), 0, null),
+          new SegmentReference(2, 2, 3, makeUris('fake:1'), 0, null)
+        ]);
+
+        // Delay the next segment download.  This will stall either audio or
+        // video, but the other should continue.
+        var req1 = netEngine.delayNextRequest();
+
+        storage.store('')
+            .then(function(manifest) {
+              expect(manifest).toBeTruthy();
+            })
+            .catch(fail)
+            .then(done);
+
+        shaka.test.Util.delay(1).then(function() {
+          // Should have downloaded all of the segments from either audio/video
+          // and a single (pending) request for the other.
+          expect(netEngine.request.calls.count()).toBe(4);
+          req1.resolve();
+        });
       });
 
       it('stores init segment', function(done) {

@@ -57,22 +57,21 @@ describe('CancelableChain', function() {
     }).finalize().catch(fail).then(done);
   });
 
-  it('must be finalized to catch failures',
-      /** @suppress {unnecessaryCasts} */ function() {
-        // compiler workaround
-        var catchMethod = /** @type {Object} */(chain)['catch'];
+  it('must be finalized to catch failures', function() {
+    // compiler workaround
+    var catchMethod = /** @type {Object} */(chain)['catch'];
 
-        // no chain.catch
-        expect(catchMethod).toBe(undefined);
-        // no second argument on chain.then
-        expect(chain.then.length).toBe(1);
-        // finalize returns the final Promise, where errors are received.
-        expect(chain.finalize().catch).toEqual(jasmine.any(Function));
-      });
+    // no chain.catch
+    expect(catchMethod).toBe(undefined);
+    // no second argument on chain.then
+    expect(chain.then.length).toBe(1);
+    // finalize returns the final Promise, where errors are received.
+    expect(chain.finalize().catch).toEqual(jasmine.any(Function));
+  });
 
   it('stops accepting new stages after being finalized', function(done) {
     chain.then(function() {
-      return shaka.test.Util.delay(0.1);
+      return shaka.test.Util.delay(0.5);
     });
 
     var p = chain.finalize();
@@ -163,7 +162,7 @@ describe('CancelableChain', function() {
         finalComplete = true;
       }).catch(fail);
 
-      shaka.test.Util.delay(0.1).then(function() {
+      shaka.test.Util.delay(0.5).then(function() {
         // The whole chain is done before we cancel.
         expect(stageComplete).toBe(true);
         expect(finalComplete).toBe(true);
@@ -182,7 +181,7 @@ describe('CancelableChain', function() {
         finalComplete = true;
       });
 
-      shaka.test.Util.delay(0.1).then(function() {
+      shaka.test.Util.delay(0.5).then(function() {
         // The whole chain is done before we cancel.
         expect(stageComplete).toBe(true);
         expect(finalComplete).toBe(true);

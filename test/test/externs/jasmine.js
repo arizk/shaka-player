@@ -25,7 +25,7 @@
 var jasmine = {};
 
 
-/** @typedef {function(function())} */
+/** @typedef {(function(function())|function())} */
 jasmine.Callback;
 
 
@@ -46,6 +46,12 @@ jasmine.Spec.prototype.pend = function(opt_message) {};
  * gjslint: disable=900
  */
 jasmine.Spec.prototype.result;
+
+
+/**
+ * @return {!string}
+ */
+jasmine.Spec.prototype.getFullName = function() {};
 
 
 
@@ -324,19 +330,27 @@ jasmine.stringMatching = function(value) {};
 jasmine.arrayContaining = function(value) {};
 
 
-/** @param {jasmine.Callback} callback */
+/**
+ * @param {jasmine.Callback} callback
+ */
 var beforeEach = function(callback) {};
 
 
-/** @param {jasmine.Callback} callback */
+/**
+ * @param {jasmine.Callback} callback
+ */
 var beforeAll = function(callback) {};
 
 
-/** @param {jasmine.Callback} callback */
+/**
+ * @param {jasmine.Callback} callback
+ */
 var afterEach = function(callback) {};
 
 
-/** @param {jasmine.Callback} callback */
+/**
+ * @param {jasmine.Callback} callback
+ */
 var afterAll = function(callback) {};
 
 
@@ -368,25 +382,22 @@ var xdescribe = function(name, callback) {};
 /**
  * @param {string} name
  * @param {jasmine.Callback} callback
- * @param {number=} opt_timeout
  */
-var it = function(name, callback, opt_timeout) {};
+var it = function(name, callback) {};
 
 
 /**
  * @param {string} name
  * @param {jasmine.Callback} callback
- * @param {number=} opt_timeout
  */
-var fit = function(name, callback, opt_timeout) {};
+var fit = function(name, callback) {};
 
 
 /**
  * @param {string} name
  * @param {jasmine.Callback} callback
- * @param {number=} opt_timeout
  */
-var xit = function(name, callback, opt_timeout) {};
+var xit = function(name, callback) {};
 
 
 
@@ -397,8 +408,24 @@ var xit = function(name, callback, opt_timeout) {};
 jasmine.Env = function() {};
 
 
-/** @param {jasmine.Spec} spec */
+/**
+ * @param {jasmine.Spec} spec
+ * @return {boolean}
+ */
 jasmine.Env.prototype.specFilter = function(spec) {};
+
+
+/**
+ * @param {boolean} random
+ */
+jasmine.Env.prototype.randomizeTests = function(random) {};
+
+
+/**
+ * @param {string} seed
+ * @return {?string}
+ */
+jasmine.Env.prototype.seed = function(seed) {};
 
 
 /** @return {!jasmine.Env} */

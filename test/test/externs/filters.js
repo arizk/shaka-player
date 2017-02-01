@@ -15,11 +15,21 @@
  * limitations under the License.
  */
 
-describe('isBrowserSupported()', function() {
-  it('must be true', function() {
-    if (!shaka.Player.isBrowserSupported()) {
-      fail('Browser not supported!  Tests cannot run.');
-      shaka.test.Util.cancelAllRemainingSpecs();
-    }
-  });
-});
+/**
+ * @fileoverview Externs for our custom filters defined in test/test/boot.js.
+ * @externs
+ */
+
+
+/**
+ * @param {string} name
+ * @param {jasmine.Callback} callback
+ */
+var external_it = function(name, callback) {};
+
+
+/**
+ * @param {string} name
+ * @param {jasmine.Callback} callback
+ */
+var quarantined_it = function(name, callback) {};

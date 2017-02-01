@@ -25,8 +25,8 @@ describe('Offline', function() {
 
   beforeAll(/** @suppress {accessControls} */ function(done) {
     video = /** @type {!HTMLVideoElement} */ (document.createElement('video'));
-    video.width = '600';
-    video.height = '400';
+    video.width = 600;
+    video.height = 400;
     video.muted = true;
     document.body.appendChild(video);
 
@@ -45,6 +45,7 @@ describe('Offline', function() {
 
   beforeEach(function(done) {
     player = new shaka.Player(video);
+    player.addEventListener('error', fail);
     storage = new shaka.offline.Storage(player);
     dbEngine = new shaka.offline.DBEngine();
     dbEngine.init(shaka.offline.OfflineUtils.DB_SCHEME).catch(fail).then(done);
@@ -66,16 +67,15 @@ describe('Offline', function() {
       pending('Offline storage not supported');
     }
 
-    var uri = '//storage.googleapis.com/shaka-demo-assets/angel-one/dash.mpd';
     var storedContent;
-    storage.store(uri)
+    storage.store('test:sintel')
         .then(function(content) {
           storedContent = content;
           return player.load(storedContent.offlineUri);
         })
         .then(function() {
           video.play();
-          return shaka.test.Util.delay(5);
+          return shaka.test.Util.delay(10);
         })
         .then(function() {
           expect(video.currentTime).toBeGreaterThan(3);
@@ -87,9 +87,9 @@ describe('Offline', function() {
         })
         .catch(fail)
         .then(done);
-  }, 30000);
+  });
 
-  it('stores, plays, and deletes protected content', function(done) {
+  external_it('stores, plays, and deletes protected content', function(done) {
     // TODO: Add a PlayReady version once Edge supports offline.
     if (!support['offline'] ||
         !support.drm['com.widevine.alpha'] ||
@@ -97,16 +97,7 @@ describe('Offline', function() {
       pending('Persistent licenses not supported');
     }
 
-    var uri = '//storage.googleapis.com/shaka-demo-assets/' +
-              'angel-one-widevine/dash.mpd';
-    player.configure({
-      drm: {
-        servers: {
-          'com.widevine.alpha': '//widevine-proxy.appspot.com/proxy'
-        }
-      }
-    });
-
+    shaka.test.TestScheme.setupPlayer(player, 'sintel-enc');
     var onError = function(e) {
       // We should only get a not-found error.
       var expected = new shaka.util.Error(
@@ -118,7 +109,7 @@ describe('Offline', function() {
     var storedContent;
     var sessionId;
     var drmEngine;
-    storage.store(uri)
+    storage.store('test:sintel-enc')
         .then(function(content) {
           storedContent = content;
           expect(storedContent.offlineUri).toBe('offline:0');
@@ -147,15 +138,21 @@ describe('Offline', function() {
           return player.unload();
         })
         .then(function() { return storage.remove(storedContent); })
-        .then(/** @suppress {accessControls} */ function() {
-          // Should fail, will call |onError| and resolve with null.
-          return drmEngine.loadOfflineSession_(sessionId);
-        })
+        .then(
+            /**
+             * @suppress {accessControls}
+             * @return {!Promise.<MediaKeySession>}
+             */
+            function() {
+              // Should fail, will call |onError| and resolve with null.
+              return drmEngine.loadOfflineSession_(sessionId);
+            }
+        )
         .then(function(session) {
           expect(session).toBeFalsy();
           return drmEngine.destroy();
         })
         .catch(fail)
         .then(done);
-  }, 30000);
+  });
 });

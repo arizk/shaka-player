@@ -101,8 +101,8 @@ shakaExtern.Stats;
  *   kind: ?string,
  *   width: ?number,
  *   height: ?number,
- *
- *   hasOutputRestrictions: boolean
+ *   frameRate: ?number,
+ *   codecs: ?string
  * }}
  *
  * @description
@@ -131,12 +131,10 @@ shakaExtern.Stats;
  *   (only for video tracks) The width of the track in pixels.
  * @property {?number} height
  *   (only for video tracks) The height of the track in pixels.
- * @property {boolean} hasOutputRestrictions
- *   True if this media track is encrypted and has output restrictions (e.g.,
- *   resolution constraints) set by the key system. If true, the key system may
- *   prohibit playback of this track. Applications must know beforehand if a
- *   particular track with output restrictions is actually playable (based on
- *   their own business rules).
+ * @property {?number} frameRate
+ *   The video framerate provided in the manifest, if present.
+ * @property {?string} codecs
+ *   The audio/video codecs string provided in the manifest, if present.
  * @exportDoc
  */
 shakaExtern.Track;
@@ -339,7 +337,9 @@ shakaExtern.ManifestConfiguration;
  *   retryParameters: shakaExtern.RetryParameters,
  *   rebufferingGoal: number,
  *   bufferingGoal: number,
- *   bufferBehind: number
+ *   bufferBehind: number,
+ *   ignoreTextStreamFailures: boolean,
+ *   useRelativeCueTimestamps: boolean
  * }}
  *
  * @description
@@ -360,7 +360,12 @@ shakaExtern.ManifestConfiguration;
  *   The maximum number of seconds of content that the StreamingEngine will keep
  *   in buffer behind the playhead when it appends a new media segment.
  *   The StreamingEngine will evict content to meet this limit.
- *
+ * @property {boolean} ignoreTextStreamFailures
+ *   If true, the player will ignore text stream failures and proceed to play
+ *   other streams.
+ * @property {boolean} useRelativeCueTimestamps
+ *   If true, WebVTT cue timestamps will be treated as relative to the start
+ *   time of the VTT segment. Defaults to false.
  * @exportDoc
  */
 shakaExtern.StreamingConfiguration;

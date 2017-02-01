@@ -54,9 +54,17 @@ describe('MediaSourceEngine', function() {
       return contentType == 'audio' ? audioSourceBuffer : videoSourceBuffer;
     });
 
-    // MediaSourceEngine only uses video to read error codes when operations
-    // fail.
-    mockVideo = { error: null };
+    // MediaSourceEngine uses video to:
+    //  - read error codes when operations fail
+    //  - seek to flush the pipeline on some platforms
+    //  - check buffered.length to assert that flushing the pipeline is okay
+    mockVideo = {
+      error: null,
+      currentTime: 0,
+      buffered: {
+        length: 0
+      }
+    };
     var video = /** @type {HTMLMediaElement} */(mockVideo);
     mediaSourceEngine =
         new shaka.media.MediaSourceEngine(video, mockMediaSource, null);
@@ -163,6 +171,23 @@ describe('MediaSourceEngine', function() {
       expect(mediaSourceEngine.bufferedAheadOf('audio', 6)).toBeCloseTo(4);
       expect(mediaSourceEngine.bufferedAheadOf('audio', 9.9)).toBeCloseTo(0.1);
     });
+
+    it('jumps small gaps in media', function() {
+      audioSourceBuffer.buffered.length = 4;
+      audioSourceBuffer.buffered.start.and.callFake(function(i) {
+        return [1, 3.03, 7, 9.02][i];
+      });
+      audioSourceBuffer.buffered.end.and.callFake(function(i) {
+        return [3, 6, 9, 11][i];
+      });
+
+      expect(mediaSourceEngine.bufferedAheadOf('audio', 3.02))
+                                              .toBeCloseTo(2.98);
+      expect(mediaSourceEngine.bufferedAheadOf('audio', 2)).toBeCloseTo(4);
+      expect(mediaSourceEngine.bufferedAheadOf('audio', 6)).toBeCloseTo(0);
+      expect(mediaSourceEngine.bufferedAheadOf('audio', 6.98))
+                                              .toBeCloseTo(4.02);
+    });
   });
 
   describe('appendBuffer', function() {
@@ -241,15 +266,13 @@ describe('MediaSourceEngine', function() {
       expect(p2.status).toBe('pending');
 
       audioSourceBuffer.updateend();
-      // Wait a tick between each updateend() and the status check that follows.
-      Promise.resolve().then(function() {
-        expect(p1.status).toBe('resolved');
+      p1.then(function() {
         expect(p2.status).toBe('pending');
         expect(audioSourceBuffer.appendBuffer).toHaveBeenCalledWith(2);
 
         audioSourceBuffer.updateend();
+        return p2;
       }).then(function() {
-        expect(p2.status).toBe('resolved');
         done();
       });
     });
@@ -272,15 +295,15 @@ describe('MediaSourceEngine', function() {
       audioSourceBuffer.updateend();
       videoSourceBuffer.updateend();
       // Wait a tick between each updateend() and the status check that follows.
-      Promise.resolve().then(function() {
-        expect(p1.status).toBe('resolved');
+      p1.then(function() {
         expect(p2.status).toBe('pending');
-        expect(p3.status).toBe('resolved');
         expect(audioSourceBuffer.appendBuffer).toHaveBeenCalledWith(2);
 
-        audioSourceBuffer.updateend();
+        return p3;
       }).then(function() {
-        expect(p2.status).toBe('resolved');
+        audioSourceBuffer.updateend();
+        return p2;
+      }).then(function() {
         done();
       });
     });
@@ -317,7 +340,7 @@ describe('MediaSourceEngine', function() {
     });
   });
 
-  describe('remove and clear', function() {
+  describe('remove', function() {
     beforeEach(function() {
       captureEvents(audioSourceBuffer, ['updateend', 'error']);
       captureEvents(videoSourceBuffer, ['updateend', 'error']);
@@ -376,15 +399,13 @@ describe('MediaSourceEngine', function() {
       expect(p2.status).toBe('pending');
 
       audioSourceBuffer.updateend();
-      // Wait a tick between each updateend() and the status check that follows.
-      Promise.resolve().then(function() {
-        expect(p1.status).toBe('resolved');
+      p1.then(function() {
         expect(p2.status).toBe('pending');
         expect(audioSourceBuffer.remove).toHaveBeenCalledWith(6, 10);
 
         audioSourceBuffer.updateend();
+        return p2;
       }).then(function() {
-        expect(p2.status).toBe('resolved');
         done();
       });
     });
@@ -406,16 +427,14 @@ describe('MediaSourceEngine', function() {
 
       audioSourceBuffer.updateend();
       videoSourceBuffer.updateend();
-      // Wait a tick between each updateend() and the status check that follows.
-      Promise.resolve().then(function() {
-        expect(p1.status).toBe('resolved');
+      p1.then(function() {
         expect(p2.status).toBe('pending');
-        expect(p3.status).toBe('resolved');
         expect(audioSourceBuffer.remove).toHaveBeenCalledWith(6, 10);
-
-        audioSourceBuffer.updateend();
+        return p3;
       }).then(function() {
-        expect(p2.status).toBe('resolved');
+        audioSourceBuffer.updateend();
+        return p2;
+      }).then(function() {
         done();
       });
     });
@@ -450,6 +469,14 @@ describe('MediaSourceEngine', function() {
         done();
       });
     });
+  });
+
+  describe('clear', function() {
+    beforeEach(function() {
+      captureEvents(audioSourceBuffer, ['updateend', 'error']);
+      captureEvents(videoSourceBuffer, ['updateend', 'error']);
+      mediaSourceEngine.init({'audio': 'audio/foo', 'video': 'video/foo'});
+    });
 
     it('clears the given data', function(done) {
       mockMediaSource.durationGetter_.and.returnValue(20);
@@ -457,6 +484,40 @@ describe('MediaSourceEngine', function() {
         expect(audioSourceBuffer.remove.calls.count()).toBe(1);
         expect(audioSourceBuffer.remove.calls.argsFor(0)[0]).toBe(0);
         expect(audioSourceBuffer.remove.calls.argsFor(0)[1] >= 20).toBeTruthy();
+        done();
+      });
+      audioSourceBuffer.updateend();
+    });
+
+    it('does not seek', function(done) {
+      // We had a bug in which we got into a seek loop. Seeking caused
+      // StreamingEngine to call clear().  Clearing triggered a pipeline flush
+      // which was implemented by seeking.  See issue #569.
+
+      // This loop is difficult to test for directly.
+
+      // A unit test on StreamingEngine would not suffice, since reproduction of
+      // the bug would involve making the mock MediaSourceEngine seek on clear.
+      // Since the fix was to remove the implicit seek, this behavior would then
+      // be removed from the mock, which would render the test useless.
+
+      // An integration test involving both StreamingEngine and MediaSourcEngine
+      // would also be problematic.  The bug involved a race, so it would be
+      // difficult to reproduce the necessary timing.  And if we succeeded, it
+      // would be tough to detect that we were definitely in a seek loop, since
+      // nothing was mocked.
+
+      // So the best option seems to be to enforce that clear() does not result
+      // in a seek.  This can be done here, in a unit test on MediaSourceEngine.
+      // It does not reproduce the seek loop, but it does ensure that the test
+      // would fail if we ever reintroduced this behavior.
+
+      var originalTime = 10;
+      mockVideo.currentTime = originalTime;
+
+      mockMediaSource.durationGetter_.and.returnValue(20);
+      mediaSourceEngine.clear('audio').then(function() {
+        expect(mockVideo.currentTime).toBe(originalTime);
         done();
       });
       audioSourceBuffer.updateend();
@@ -483,7 +544,7 @@ describe('MediaSourceEngine', function() {
     });
 
     it('sets the append window end', function(done) {
-      expect(audioSourceBuffer.appendWindowEnd).toBe(Number.POSITIVE_INFINITY);
+      expect(audioSourceBuffer.appendWindowEnd).toBe(Infinity);
       mediaSourceEngine.setAppendWindowEnd('audio', 10).then(function() {
         // MediaSourceEngine adds a fudge factor to deal with edge cases where
         // the last desired frame in a period could be chopped off.  Expect a
@@ -522,18 +583,15 @@ describe('MediaSourceEngine', function() {
       expect(p3.status).toBe('pending');
 
       audioSourceBuffer.updateend();
-      // Wait a tick between each updateend() and the status check that follows.
-      Promise.resolve().then(function() {
-        expect(p1.status).toBe('resolved');
+      p1.then(function() {
         expect(p2.status).toBe('pending');
         expect(p3.status).toBe('pending');
         videoSourceBuffer.updateend();
+        return p2;
       }).then(function() {
-        expect(p2.status).toBe('resolved');
-        // blocking multiple queues takes an extra tick to process:
+        return p3;
       }).then(function() {}).then(function() {
         expect(mockMediaSource.endOfStream).toHaveBeenCalled();
-        expect(p3.status).toBe('resolved');
         done();
       });
     });
@@ -619,18 +677,15 @@ describe('MediaSourceEngine', function() {
       expect(p3.status).toBe('pending');
 
       audioSourceBuffer.updateend();
-      // Wait a tick between each updateend() and the status check that follows.
-      Promise.resolve().then(function() {
-        expect(p1.status).toBe('resolved');
+      p1.then(function() {
         expect(p2.status).toBe('pending');
         expect(p3.status).toBe('pending');
         videoSourceBuffer.updateend();
+        return p2;
       }).then(function() {
-        expect(p2.status).toBe('resolved');
-        // blocking multiple queues takes an extra tick to process:
+        return p3;
       }).then(function() {}).then(function() {
         expect(mockMediaSource.durationSetter_).toHaveBeenCalledWith(100);
-        expect(p3.status).toBe('resolved');
         done();
       });
     });
@@ -829,6 +884,7 @@ describe('MediaSourceEngine', function() {
 
   function createMockSourceBuffer() {
     return {
+      abort: jasmine.createSpy('abort'),
       appendBuffer: jasmine.createSpy('appendBuffer'),
       remove: jasmine.createSpy('remove'),
       updating: false,
@@ -840,7 +896,7 @@ describe('MediaSourceEngine', function() {
         end: jasmine.createSpy('buffered.end')
       },
       timestampOffset: 0,
-      appendWindowEnd: Number.POSITIVE_INFINITY,
+      appendWindowEnd: Infinity,
       updateend: function() {},
       error: function() {}
     };

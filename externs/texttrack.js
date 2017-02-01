@@ -16,42 +16,32 @@
  */
 
 /**
- * @fileoverview Externs for HTMLTrackElement.
+ * @fileoverview Externs for TextTrack and TextTrackCue which are
+ * missing from the closure compiler.
+ *
  * @externs
  */
 
 
+/** @type {string} */
+TextTrack.prototype.label;
 
-/**
- * @constructor
- * @extends {HTMLElement}
- */
-function HTMLTrackElement() {}
+
+/** @type {string} */
+TextTrackCue.prototype.positionAlign;
+
+
+/** @type {string} */
+TextTrackCue.prototype.lineAlign;
+
+
+/** @type {number|null|string} */
+TextTrackCue.prototype.line;
 
 
 /** @type {string} */
-HTMLTrackElement.prototype.kind;
-
-
-/** @type {string} */
-HTMLTrackElement.prototype.src;
-
-
-/** @type {string} */
-HTMLTrackElement.prototype.srclang;
-
-
-/** @type {string} */
-HTMLTrackElement.prototype.label;
+TextTrackCue.prototype.vertical;
 
 
 /** @type {boolean} */
-HTMLTrackElement.prototype.default;
-
-
-/** @const {TextTrack} */
-HTMLTrackElement.prototype.track;
-
-
-/** @const {string} */
-TextTrack.prototype.id;
+TextTrackCue.prototype.snapToLines;

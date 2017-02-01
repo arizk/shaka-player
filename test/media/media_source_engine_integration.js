@@ -16,58 +16,22 @@
  */
 
 describe('MediaSourceEngine', function() {
-  var metadata = {
-    video: {
-      initSegmentUri: 'test/test/assets/sintel-video-init.mp4',
-      mvhdOffset: 0x24,
-      segmentUri: 'test/test/assets/sintel-video-segment.mp4',
-      tfdtOffset: 0x38,
-      segmentDuration: 10,
-      presentationTimeOffset: 0,
-      mimeType: 'video/mp4; codecs="avc1.42c01e"',
-      generator: null
-    },
-    audio: {
-      initSegmentUri: 'test/test/assets/sintel-audio-init.mp4',
-      mvhdOffset: 0x20,
-      segmentUri: 'test/test/assets/sintel-audio-segment.mp4',
-      tfdtOffset: 0x3c,
-      segmentDuration: 10,
-      presentationTimeOffset: 0,
-      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
-      generator: null
-    }
-    // TODO: add text streams to MSE integration tests
-  };
-  var presentationDuration = 840;
-
-  var originalTimeout;
   var video;
   var mediaSource;
   var mediaSourceEngine;
+  var generators;
+  var metadata;
+  var presentationDuration = 840;
+  // TODO: add text streams to MSE integration tests
 
-  function createStreamGenerator(metadata) {
-    var generator = new shaka.test.DashVodStreamGenerator(
-        metadata.initSegmentUri, metadata.mvhdOffset,
-        metadata.segmentUri, metadata.tfdtOffset, metadata.segmentDuration,
-        metadata.presentationTimeOffset, presentationDuration);
-    metadata.generator = generator;
-    return generator.init();
-  }
-
-  beforeAll(function(done) {
+  beforeAll(function() {
     video = /** @type {HTMLVideoElement} */ (document.createElement('video'));
-    video.width = '600';
-    video.height = '400';
+    video.width = 600;
+    video.height = 400;
     document.body.appendChild(video);
 
-    originalTimeout = jasmine.DEFAULT_TIMEOUT_INTERVAL;
-    jasmine.DEFAULT_TIMEOUT_INTERVAL = 10000;  // ms
-
-    Promise.all([
-      createStreamGenerator(metadata.video),
-      createStreamGenerator(metadata.audio)
-    ]).catch(fail).then(done);
+    metadata = shaka.test.TestScheme.DATA['sintel'];
+    generators = shaka.test.TestScheme.GENERATORS['sintel'];
   });
 
   beforeEach(function(done) {
@@ -85,23 +49,23 @@ describe('MediaSourceEngine', function() {
 
   afterEach(function(done) {
     mediaSourceEngine.destroy().then(function() {
-      video.src = '';
+      video.removeAttribute('src');
+      video.load();
       done();
     });
   });
 
   afterAll(function() {
     document.body.removeChild(video);
-    jasmine.DEFAULT_TIMEOUT_INTERVAL = originalTimeout;
   });
 
   function appendInit(type) {
-    var segment = metadata[type].generator.getInitSegment(Date.now() / 1000);
+    var segment = generators[type].getInitSegment(Date.now() / 1000);
     return mediaSourceEngine.appendBuffer(type, segment, null, null);
   }
 
   function append(type, segmentNumber) {
-    var segment = metadata[type].generator.
+    var segment = generators[type].
         getSegment(segmentNumber, 0, Date.now() / 1000);
     return mediaSourceEngine.appendBuffer(type, segment, null, null);
   }
@@ -116,8 +80,15 @@ describe('MediaSourceEngine', function() {
     return mediaSourceEngine.remove(type, start, end);
   }
 
+  function getFullMimeType(streamMetadata) {
+    var fullMimeType = streamMetadata.mimeType;
+    if (streamMetadata.codecs)
+      fullMimeType += '; codecs="' + streamMetadata.codecs + '"';
+    return fullMimeType;
+  }
+
   it('buffers MP4 video', function(done) {
-    mediaSourceEngine.init({'video': metadata.video.mimeType});
+    mediaSourceEngine.init({'video': getFullMimeType(metadata.video)});
     mediaSourceEngine.setDuration(presentationDuration).then(function() {
       return appendInit('video');
     }).then(function() {
@@ -135,7 +106,7 @@ describe('MediaSourceEngine', function() {
   });
 
   it('removes segments', function(done) {
-    mediaSourceEngine.init({'video': metadata.video.mimeType});
+    mediaSourceEngine.init({'video': getFullMimeType(metadata.video)});
     mediaSourceEngine.setDuration(presentationDuration).then(function() {
       return appendInit('video');
     }).then(function() {
@@ -162,7 +133,7 @@ describe('MediaSourceEngine', function() {
   });
 
   it('extends the duration', function(done) {
-    mediaSourceEngine.init({'video': metadata.video.mimeType});
+    mediaSourceEngine.init({'video': getFullMimeType(metadata.video)});
     mediaSourceEngine.setDuration(0).then(function() {
       return appendInit('video');
     }).then(function() {
@@ -189,7 +160,7 @@ describe('MediaSourceEngine', function() {
   });
 
   it('ends the stream, truncating the duration', function(done) {
-    mediaSourceEngine.init({'video': metadata.video.mimeType});
+    mediaSourceEngine.init({'video': getFullMimeType(metadata.video)});
     mediaSourceEngine.setDuration(presentationDuration).then(function() {
       return appendInit('video');
     }).then(function() {
@@ -215,7 +186,7 @@ describe('MediaSourceEngine', function() {
       p.then(function() { resolutionOrder.push(nextIndex); });
     }
 
-    mediaSourceEngine.init({'video': metadata.video.mimeType});
+    mediaSourceEngine.init({'video': getFullMimeType(metadata.video)});
     checkOrder(mediaSourceEngine.setDuration(presentationDuration));
     checkOrder(appendInit('video'));
     checkOrder(append('video', 1));
@@ -229,7 +200,7 @@ describe('MediaSourceEngine', function() {
   });
 
   it('buffers MP4 audio', function(done) {
-    mediaSourceEngine.init({'audio': metadata.audio.mimeType});
+    mediaSourceEngine.init({'audio': getFullMimeType(metadata.audio)});
     mediaSourceEngine.setDuration(presentationDuration).then(function() {
       // NOTE: For some reason, this appendInit never resolves on my Windows VM.
       // The test operates correctly on real hardware.
@@ -250,8 +221,8 @@ describe('MediaSourceEngine', function() {
 
   it('buffers MP4 video and audio', function(done) {
     mediaSourceEngine.init({
-      'video': metadata.video.mimeType,
-      'audio': metadata.audio.mimeType
+      'video': getFullMimeType(metadata.video),
+      'audio': getFullMimeType(metadata.audio)
     });
 
     mediaSourceEngine.setDuration(presentationDuration).catch(fail);
@@ -306,7 +277,7 @@ describe('MediaSourceEngine', function() {
   });
 
   it('trims content at appendWindowEnd', function(done) {
-    mediaSourceEngine.init({'video': metadata.video.mimeType});
+    mediaSourceEngine.init({'video': getFullMimeType(metadata.video)});
     mediaSourceEngine.setDuration(presentationDuration).then(function() {
       return appendInit('video');
     }).then(function() {

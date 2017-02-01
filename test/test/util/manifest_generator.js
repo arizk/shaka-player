@@ -25,12 +25,15 @@ goog.provide('shaka.test.ManifestGenerator');
  * point and will apply to the most recent substructure.  For example, the
  * language() method sets the language of the most recent stream set.
  *
+ * @param {*=} opt_shaka
  * @constructor
  * @struct
  */
-shaka.test.ManifestGenerator = function() {
-  var timeline = new shaka.media.PresentationTimeline(0, 0);
-  timeline.setSegmentAvailabilityDuration(Number.POSITIVE_INFINITY);
+shaka.test.ManifestGenerator = function(opt_shaka) {
+  this.shaka_ = opt_shaka || window.shaka;
+
+  var timeline = new this.shaka_.media.PresentationTimeline(0, 0);
+  timeline.setSegmentAvailabilityDuration(Infinity);
   timeline.notifyMaxSegmentDuration(10);
 
   /** @private {shakaExtern.Manifest} */
@@ -128,6 +131,7 @@ shaka.test.ManifestGenerator.prototype.addStreamSet = function(type) {
 shaka.test.ManifestGenerator.prototype.language = function(language) {
   var streamSet = this.currentStreamSet_();
   streamSet.language = language;
+  streamSet.streams.forEach(function(s) { s.language = language; });
   return this;
 };
 
@@ -162,7 +166,8 @@ shaka.test.ManifestGenerator.prototype.addDrmInfo = function(keySystem) {
     audioRobustness: '',
     videoRobustness: '',
     serverCertificate: null,
-    initData: null
+    initData: null,
+    keyIds: []
   });
   return this;
 };
@@ -286,15 +291,16 @@ shaka.test.ManifestGenerator.prototype.addStream = function(id) {
     presentationTimeOffset: 0,
     mimeType: 'video/mp4',
     codecs: 'avc1.4d401f',
+    frameRate: undefined,
     bandwidth: 100,
     width: undefined,
     height: undefined,
     kind: undefined,
     encrypted: false,
     keyId: null,
+    language: streamSet.language,
     allowedByApplication: true,
-    allowedByKeySystem: true,
-    hasOutputRestrictions: false
+    allowedByKeySystem: true
   };
   stream.createSegmentIndex.and.callFake(
       function() { return Promise.resolve(); });
@@ -352,6 +358,63 @@ shaka.test.ManifestGenerator.prototype.anyInitSegment = function() {
 
 
 /**
+ * Sets the current stream to use segment template to create segments.
+ *
+ * @param {string} template An sprintf template that will take the segment
+ *   index and give a URI.
+ * @param {number} segmentDuration
+ * @return {!shaka.test.ManifestGenerator}
+ */
+shaka.test.ManifestGenerator.prototype.useSegmentTemplate = function(
+    template, segmentDuration) {
+  var stream = this.currentStream_();
+  var totalDuration = this.manifest_.presentationTimeline.getDuration();
+  var segmentCount = totalDuration / segmentDuration;
+  stream.createSegmentIndex = function() { return Promise.resolve(); };
+  stream.findSegmentPosition = function(time) {
+    return Math.floor(time / segmentDuration);
+  };
+  stream.getSegmentReference = (function(index) {
+    if (index < 0 || index >= segmentCount)
+      return null;
+    var getUris = function() { return [sprintf(template, index)]; };
+    var start = index * segmentDuration;
+    var end = Math.min(totalDuration, (index + 1) * segmentDuration);
+    return new this.shaka_.media.SegmentReference(
+        index, start, end, getUris, 0, null);
+  }.bind(this));
+  return this;
+};
+
+
+/**
+ * Sets the current stream to use the given text stream.  It will serve a
+ * single media segment at the given URI for the entire Period.
+ *
+ * @param {string} uri
+ * @return {!shaka.test.ManifestGenerator}
+ */
+shaka.test.ManifestGenerator.prototype.textStream = function(uri) {
+  var stream = this.currentStream_();
+  var duration = this.manifest_.presentationTimeline.getDuration();
+  var getUris = function() { return [uri]; };
+
+  stream.createSegmentIndex = function() { return Promise.resolve(); };
+  stream.findSegmentPosition = function(time) {
+    return (time >= 0 && time < duration ? 1 : null);
+  };
+  stream.getSegmentReference = (function(position) {
+    if (position != 1) return null;
+    var startTime = 0;
+    return new this.shaka_.media.SegmentReference(
+        position, startTime, duration, getUris, 0, null);
+  }.bind(this));
+
+  return this;
+};
+
+
+/**
  * Sets the init segment of the current stream.
  *
  * @param {!Array.<string>} uris
@@ -364,7 +427,7 @@ shaka.test.ManifestGenerator.prototype.initSegmentReference = function(
   var stream = this.currentStream_();
   var getUris = function() { return uris; };
   stream.initSegmentReference =
-      new shaka.media.InitSegmentReference(getUris, startByte, endByte);
+      new this.shaka_.media.InitSegmentReference(getUris, startByte, endByte);
   return this;
 };
 
@@ -447,6 +510,19 @@ shaka.test.ManifestGenerator.prototype.kind = function(kind) {
 shaka.test.ManifestGenerator.prototype.encrypted = function(encrypted) {
   var stream = this.currentStream_();
   stream.encrypted = encrypted;
+  return this;
+};
+
+
+/**
+ * Sets the framerate of the current stream.
+ *
+ * @param {number} frameRate
+ * @return {!shaka.test.ManifestGenerator}
+ */
+shaka.test.ManifestGenerator.prototype.frameRate = function(frameRate) {
+  var stream = this.currentStream_();
+  stream.frameRate = frameRate;
   return this;
 };
 

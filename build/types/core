@@ -41,11 +41,13 @@
 +../../lib/util/i_destroyable.js
 +../../lib/util/language_utils.js
 +../../lib/util/map_utils.js
++../../lib/util/mp4_parser.js
 +../../lib/util/multi_map.js
 +../../lib/util/pssh.js
 +../../lib/util/public_promise.js
 +../../lib/util/stream_utils.js
 +../../lib/util/string_utils.js
 +../../lib/util/text_parser.js
++../../lib/util/timer.js
 +../../lib/util/uint8array_utils.js
 +../../lib/util/xml_utils.js

@@ -50,6 +50,9 @@ shaka.test.FakeMediaSourceEngine = function(segmentData, opt_drift) {
   /** @private {!Object.<string, number>} */
   this.timestampOffsets_ = {};
 
+  /** @private {number} */
+  this.duration_ = Infinity;
+
   for (var type in segmentData) {
     var data = segmentData[type];
 
@@ -78,6 +81,7 @@ shaka.test.FakeMediaSourceEngine = function(segmentData, opt_drift) {
   spyOn(this, 'setTimestampOffset').and.callThrough();
   spyOn(this, 'setAppendWindowEnd').and.callThrough();
   spyOn(this, 'setDuration').and.callThrough();
+  spyOn(this, 'getDuration').and.callThrough();
 };
 
 
@@ -86,6 +90,7 @@ shaka.test.FakeMediaSourceEngine = function(segmentData, opt_drift) {
  *   initSegments: !Array.<!BufferSource>,
  *   segments: !Array.<!BufferSource>,
  *   segmentStartTimes: !Array.<number>,
+ *   segmentPeriodTimes: !Array.<number>,
  *   segmentDuration: number
  * }}
  *
@@ -97,6 +102,9 @@ shaka.test.FakeMediaSourceEngine = function(segmentData, opt_drift) {
  *   The start time of each media segment as they would appear within a
  *   segment index. These values plus drift simulate the segments'
  *   baseMediaDecodeTime (or equivalent) values.
+ * @property {!Array.<number>} segmentPeriodTimes
+ *   The start time of the period of the associated segment.  These are the same
+ *   segments as in |segmentStartTimes|.
  * @property {number} segmentDuration
  *   The duration of each media segment.
  */
@@ -184,7 +192,9 @@ shaka.test.FakeMediaSourceEngine.prototype.appendBuffer = function(
   if (i < 0)
     throw new Error('unexpected data');
 
-  expect(startTime).toBe(this.segmentData[type].segmentStartTimes[i]);
+  expect(startTime).toBe(
+      this.segmentData[type].segmentStartTimes[i] +
+      this.segmentData[type].segmentPeriodTimes[i]);
   expect(endTime).toBe(startTime + this.segmentData[type].segmentDuration);
 
   // Verify that the segment is aligned.
@@ -264,7 +274,14 @@ shaka.test.FakeMediaSourceEngine.prototype.endOfStream = function(opt_reason) {
 
 /** @override */
 shaka.test.FakeMediaSourceEngine.prototype.setDuration = function(duration) {
+  this.duration_ = duration;
   return Promise.resolve();
+};
+
+
+/** @override */
+shaka.test.FakeMediaSourceEngine.prototype.getDuration = function() {
+  return this.duration_;
 };
 
 

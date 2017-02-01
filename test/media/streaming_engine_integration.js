@@ -16,30 +16,8 @@
  */
 
 describe('StreamingEngine', function() {
-  var originalTimeout;
-
-  var metadata = {
-    video: {
-      initSegmentUri: 'test/test/assets/sintel-video-init.mp4',
-      mvhdOffset: 0x24,
-      segmentUri: 'test/test/assets/sintel-video-segment.mp4',
-      tfdtOffset: 0x38,
-      segmentDuration: 10,
-      presentationTimeOffset: 0,
-      mimeType: 'video/mp4; codecs="avc1.42c01e"',
-      generator: null
-    },
-    audio: {
-      initSegmentUri: 'test/test/assets/sintel-audio-init.mp4',
-      mvhdOffset: 0x20,
-      segmentUri: 'test/test/assets/sintel-audio-segment.mp4',
-      tfdtOffset: 0x3c,
-      segmentDuration: 10,
-      presentationTimeOffset: 0,
-      mimeType: 'audio/mp4; codecs="mp4a.40.2"',
-      generator: null
-    }
-  };
+  var metadata;
+  var generators;
 
   var eventManager;
   var video;
@@ -68,14 +46,14 @@ describe('StreamingEngine', function() {
   var streamingEngine;
 
   beforeAll(function() {
-    originalTimeout = jasmine.DEFAULT_TIMEOUT_INTERVAL;
-    jasmine.DEFAULT_TIMEOUT_INTERVAL = 90000;  // ms
-
     video = /** @type {HTMLVideoElement} */ (document.createElement('video'));
-    video.width = '600';
-    video.height = '400';
+    video.width = 600;
+    video.height = 400;
     video.muted = true;
     document.body.appendChild(video);
+
+    metadata = shaka.test.TestScheme.DATA['sintel'];
+    generators = {};
   });
 
   beforeEach(function(done) {
@@ -103,12 +81,8 @@ describe('StreamingEngine', function() {
 
   function setupVod() {
     return Promise.all([
-      createVodStreamGenerator(
-          metadata.audio,
-          60 /* presentationDuration */),
-      createVodStreamGenerator(
-          metadata.video,
-          60 /* presentationDuration */)
+      createVodStreamGenerator(metadata.audio, 'audio'),
+      createVodStreamGenerator(metadata.video, 'video')
     ]).then(function() {
       timeline = shaka.test.StreamingEngineUtil.createFakePresentationTimeline(
           0 /* segmentAvailabilityStart */,
@@ -135,10 +109,10 @@ describe('StreamingEngine', function() {
   function setupLive() {
     return Promise.all([
       createLiveStreamGenerator(
-          metadata.audio,
+          metadata.audio, 'audio',
           20 /* timeShiftBufferDepth */),
       createLiveStreamGenerator(
-          metadata.video,
+          metadata.video, 'video',
           20 /* timeShiftBufferDepth */)
     ]).then(function() {
       // The generator's AST is set to 295 seconds in the past, so the live-edge
@@ -147,39 +121,38 @@ describe('StreamingEngine', function() {
       timeline = shaka.test.StreamingEngineUtil.createFakePresentationTimeline(
           275 - 10 /* segmentAvailabilityStart */,
           295 - 10 /* segmentAvailabilityEnd */,
-          Number.POSITIVE_INFINITY /* presentationDuration */);
+          Infinity /* presentationDuration */);
       setupPlayhead();
 
       setupNetworkingEngine(
           0 /* firstPeriodStartTime */,
           300 /* secondPeriodStartTime */,
-          Number.POSITIVE_INFINITY /* presentationDuration */,
+          Infinity /* presentationDuration */,
           { audio: metadata.audio.segmentDuration,
             video: metadata.video.segmentDuration });
 
       setupManifest(
           0 /* firstPeriodStartTime */,
           300 /* secondPeriodStartTime */,
-          Number.POSITIVE_INFINITY /* presentationDuration */);
+          Infinity /* presentationDuration */);
 
       createStreamingEngine();
     });
   }
 
-  function createVodStreamGenerator(metadata, presentationDuration) {
+  function createVodStreamGenerator(metadata, type) {
     var generator = new shaka.test.DashVodStreamGenerator(
         metadata.initSegmentUri,
         metadata.mvhdOffset,
         metadata.segmentUri,
         metadata.tfdtOffset,
         metadata.segmentDuration,
-        metadata.presentationTimeOffset,
-        presentationDuration);
-    metadata.generator = generator;
+        metadata.presentationTimeOffset);
+    generators[type] = generator;
     return generator.init();
   }
 
-  function createLiveStreamGenerator(metadata, timeShiftBufferDepth) {
+  function createLiveStreamGenerator(metadata, type, timeShiftBufferDepth) {
     // Set the generator's AST to 295 seconds in the past so the
     // StreamingEngine begins streaming close to the end of the first Period.
     var now = Date.now() / 1000;
@@ -193,7 +166,7 @@ describe('StreamingEngine', function() {
         now - 295 /* broadcastStartTime */,
         now - 295 /* availabilityStartTime */,
         timeShiftBufferDepth);
-    metadata.generator = generator;
+    generators[type] = generator;
     return generator.init();
   }
 
@@ -216,7 +189,7 @@ describe('StreamingEngine', function() {
         function(type, periodNumber) {
           expect(periodNumber).toBeLessThan(periodStartTimes.length + 1);
           var wallClockTime = Date.now() / 1000;
-          var segment = metadata[type].generator.getInitSegment(wallClockTime);
+          var segment = generators[type].getInitSegment(wallClockTime);
           expect(segment).not.toBeNull();
           return segment;
         },
@@ -233,7 +206,7 @@ describe('StreamingEngine', function() {
 
           var wallClockTime = Date.now() / 1000;
 
-          var segment = metadata[type].generator.getSegment(
+          var segment = generators[type].getSegment(
               position, numPriorSegments, wallClockTime);
           expect(segment).not.toBeNull();
           return segment;
@@ -263,7 +236,7 @@ describe('StreamingEngine', function() {
     manifest.minBufferTime = 2;
 
     // Create InitSegmentReferences.
-    function makeUris(uri) { return function() { return [uri]; }; };
+    function makeUris(uri) { return function() { return [uri]; }; }
     manifest.periods[0].streamSetsByType.audio.streams[0].initSegmentReference =
         new shaka.media.InitSegmentReference(makeUris('1_audio_init'), 0, null);
     manifest.periods[0].streamSetsByType.video.streams[0].initSegmentReference =
@@ -291,7 +264,9 @@ describe('StreamingEngine', function() {
       rebufferingGoal: 2,
       bufferingGoal: 5,
       retryParameters: shaka.net.NetworkingEngine.defaultRetryParameters(),
-      bufferBehind: 15
+      bufferBehind: 15,
+      ignoreTextStreamFailures: false,
+      useRelativeCueTimestamps: false
     };
     streamingEngine = new shaka.media.StreamingEngine(
         playhead,
@@ -305,7 +280,8 @@ describe('StreamingEngine', function() {
 
   afterEach(function(done) {
     streamingEngine.destroy().then(function() {
-      video.src = '';
+      video.removeAttribute('src');
+      video.load();
       return Promise.all([
         mediaSourceEngine.destroy(),
         playhead.destroy(),
@@ -316,7 +292,6 @@ describe('StreamingEngine', function() {
 
   afterAll(function() {
     document.body.removeChild(video);
-    jasmine.DEFAULT_TIMEOUT_INTERVAL = originalTimeout;
   });
 
   describe('VOD', function() {
@@ -337,7 +312,7 @@ describe('StreamingEngine', function() {
       eventManager.listen(video, 'ended', onEnded);
 
       // Let's go!
-      onChooseStreams.and.callFake(defaultOnChooseStreams.bind(null));
+      onChooseStreams.and.callFake(defaultOnChooseStreams);
       streamingEngine.init();
     });
 
@@ -364,7 +339,7 @@ describe('StreamingEngine', function() {
       eventManager.listen(video, 'ended', onEnded);
 
       // Let's go!
-      onChooseStreams.and.callFake(defaultOnChooseStreams.bind(null));
+      onChooseStreams.and.callFake(defaultOnChooseStreams);
       streamingEngine.init();
     });
 
@@ -390,7 +365,7 @@ describe('StreamingEngine', function() {
       eventManager.listen(video, 'ended', onEnded);
 
       // Let's go!
-      onChooseStreams.and.callFake(defaultOnChooseStreams.bind(null));
+      onChooseStreams.and.callFake(defaultOnChooseStreams);
       streamingEngine.init();
     });
 
@@ -416,7 +391,7 @@ describe('StreamingEngine', function() {
       eventManager.listen(video, 'ended', onEnded);
 
       // Let's go!
-      onChooseStreams.and.callFake(defaultOnChooseStreams.bind(null));
+      onChooseStreams.and.callFake(defaultOnChooseStreams);
       streamingEngine.init();
     });
   });
@@ -437,7 +412,8 @@ describe('StreamingEngine', function() {
       window.clearInterval(slideSegmentAvailabilityWindow);
     });
 
-    it('plays through Period transition', function(done) {
+    // QUARANTINED: this test does not pass 100% of the time on Firefox Win/Mac.
+    quarantined_it('plays through Period transition', function(done) {
       onStartupComplete.and.callFake(function() {
         // firstSegmentNumber =
         //   [(segmentAvailabilityEnd - rebufferingGoal) / segmentDuration] + 1
@@ -458,36 +434,38 @@ describe('StreamingEngine', function() {
       eventManager.listen(video, 'timeupdate', onTimeUpdate);
 
       // Let's go!
-      onChooseStreams.and.callFake(defaultOnChooseStreams.bind(null));
+      onChooseStreams.and.callFake(defaultOnChooseStreams);
       streamingEngine.init();
     });
 
-    it('can handle seeks ahead of availability window', function(done) {
-      onStartupComplete.and.callFake(function() {
-        video.play();
+    // QUARANTINED: this test does not pass 100% of the time on Firefox Win/Mac.
+    quarantined_it('can handle seeks ahead of availability window',
+        function(done) {
+          onStartupComplete.and.callFake(function() {
+            video.play();
 
-        // Use setTimeout to ensure the playhead has performed it's initial
-        // seeking.
-        setTimeout(function() {
-          // Seek outside the availability window right away. The playhead
-          // should adjust the video's current time.
-          video.currentTime = timeline.segmentAvailabilityEnd + 120;
-        }, 50);
-      });
+            // Use setTimeout to ensure the playhead has performed it's initial
+            // seeking.
+            setTimeout(function() {
+              // Seek outside the availability window right away. The playhead
+              // should adjust the video's current time.
+              video.currentTime = timeline.segmentAvailabilityEnd + 120;
+            }, 50);
+          });
 
-      var onTimeUpdate = function() {
-        if (video.currentTime >= 305) {
-          // We've played through the Period transition!
-          eventManager.unlisten(video, 'timeupdate');
-          done();
-        }
-      };
-      eventManager.listen(video, 'timeupdate', onTimeUpdate);
+          var onTimeUpdate = function() {
+            if (video.currentTime >= 305) {
+              // We've played through the Period transition!
+              eventManager.unlisten(video, 'timeupdate');
+              done();
+            }
+          };
+          eventManager.listen(video, 'timeupdate', onTimeUpdate);
 
-      // Let's go!
-      onChooseStreams.and.callFake(defaultOnChooseStreams.bind(null));
-      streamingEngine.init();
-    });
+          // Let's go!
+          onChooseStreams.and.callFake(defaultOnChooseStreams);
+          streamingEngine.init();
+        });
 
     it('can handle seeks behind availability window', function(done) {
       onStartupComplete.and.callFake(function() {
@@ -513,15 +491,16 @@ describe('StreamingEngine', function() {
       eventManager.listen(video, 'timeupdate', onTimeUpdate);
 
       // Let's go!
-      onChooseStreams.and.callFake(defaultOnChooseStreams.bind(null));
+      onChooseStreams.and.callFake(defaultOnChooseStreams);
       streamingEngine.init();
     });
   });
 
   /**
-   * Initializes or switches to the given period.
+   * Choose streams for the given period.
    *
    * @param {shakaExtern.Period} period
+   * @return {!Object.<string, !shakaExtern.Stream>}
    */
   function defaultOnChooseStreams(period) {
     if (period == manifest.periods[0]) {

@@ -185,9 +185,15 @@ describe('DrmEngine', function() {
 
       drmEngine.init(manifest, /* offline */ false).then(function() {
         expect(drmEngine.initialized()).toBe(true);
-        expect(drmEngine.getSupportedTypes()).toEqual([
-          'audio/webm', 'video/mp4; codecs="fake"'
-        ]);
+        var supportedTypes = drmEngine.getSupportedTypes();
+        // This is conditional because Edge 14 has a bug that prevents us from
+        // getting the types at all.  TODO: Remove the condition once Edge has
+        // released a fix for https://goo.gl/qMeV7v
+        if (supportedTypes) {
+          expect(supportedTypes).toEqual([
+            'audio/webm', 'video/mp4; codecs="fake"'
+          ]);
+        }
       }).catch(fail).then(done);
     });
 
@@ -817,7 +823,7 @@ describe('DrmEngine', function() {
 
           var message = new Uint8Array(0);
           session1.on['message']({ message: message });
-          return shaka.test.Util.delay(0.1);
+          return shaka.test.Util.delay(0.5);
         }).then(function() {
           expect(onErrorSpy).toHaveBeenCalled();
           var error = onErrorSpy.calls.argsFor(0)[0];
@@ -859,13 +865,110 @@ describe('DrmEngine', function() {
             callback(keyId1, status1);
             callback(keyId2, status2);
           });
-          session1.on['keystatuseschange']({ target: session1 });
 
-          expect(onKeyStatusSpy).toHaveBeenCalledWith({
-            '00': status1,
-            '0000': status2
+          onKeyStatusSpy.and.callFake(function(statusMap) {
+            expect(statusMap).toEqual({
+              '00': status1,
+              '0000': status2
+            });
+            done();
           });
-        }).catch(fail).then(done);
+
+          session1.on['keystatuseschange']({ target: session1 });
+        }).catch(fail);
+      });
+
+      it('causes an EXPIRED error when all keys expire', function(done) {
+        onErrorSpy.and.stub();
+
+        initAndAttach().then(function() {
+          expect(onErrorSpy).not.toHaveBeenCalled();
+
+          var initData = new Uint8Array(0);
+          mockVideo.on['encrypted'](
+              { initDataType: 'webm', initData: initData });
+
+          var keyId1 = (new Uint8Array(1)).buffer;
+          var keyId2 = (new Uint8Array(2)).buffer;
+
+          // Expire one key.
+          session1.keyStatuses.forEach.and.callFake(function(callback) {
+            callback(keyId1, 'usable');
+            callback(keyId2, 'expired');
+          });
+
+          onKeyStatusSpy.and.callFake(function(statusMap) {
+            // One key is still usable.
+            expect(onErrorSpy).not.toHaveBeenCalled();
+
+            // Expire both keys.
+            session1.keyStatuses.forEach.and.callFake(function(callback) {
+              callback(keyId1, 'expired');
+              callback(keyId2, 'expired');
+            });
+
+            onKeyStatusSpy.and.callFake(function(statusMap) {
+              // Both keys are expired, so we should have an error.
+              expect(onErrorSpy).toHaveBeenCalled();
+              // There should be exactly one error.
+              expect(onErrorSpy.calls.count()).toEqual(1);
+              var error = onErrorSpy.calls.argsFor(0)[0];
+              shaka.test.Util.expectToEqualError(error, new shaka.util.Error(
+                  shaka.util.Error.Category.DRM,
+                  shaka.util.Error.Code.EXPIRED));
+              done();
+            });
+
+            session1.on['keystatuseschange']({ target: session1 });
+          });
+
+          session1.on['keystatuseschange']({ target: session1 });
+        }).catch(fail);
+      });
+
+      it('causes only one error when two keys expire at once', function(done) {
+        onErrorSpy.and.stub();
+
+        initAndAttach().then(function() {
+          expect(onErrorSpy).not.toHaveBeenCalled();
+
+          var initData = new Uint8Array(0);
+          mockVideo.on['encrypted'](
+              { initDataType: 'webm', initData: initData });
+
+          var keyId1 = (new Uint8Array(1)).buffer;
+          var keyId2 = (new Uint8Array(2)).buffer;
+
+          // Expire both keys at once.
+          session1.keyStatuses.forEach.and.callFake(function(callback) {
+            callback(keyId1, 'expired');
+            callback(keyId2, 'expired');
+          });
+
+          onKeyStatusSpy.and.callFake(function(statusMap) {
+            // Both keys are expired, so we should have an error.
+            expect(onErrorSpy).toHaveBeenCalled();
+            // There should be exactly one error.
+            expect(onErrorSpy.calls.count()).toEqual(1);
+            var error = onErrorSpy.calls.argsFor(0)[0];
+            shaka.test.Util.expectToEqualError(error, new shaka.util.Error(
+                shaka.util.Error.Category.DRM,
+                shaka.util.Error.Code.EXPIRED));
+
+            // Ignore the next key status event, sleep for one second, then
+            // check to see if another error fired.
+            onKeyStatusSpy.and.stub();
+            shaka.test.Util.delay(1).then(function() {
+              // Still only one error.
+              expect(onErrorSpy.calls.count()).toEqual(1);
+              done();
+            });
+          });
+
+          // Fire change events for both keys.
+          session1.on['keystatuseschange']({ target: session1 });
+          session1.on['keystatuseschange']({ target: session1 });
+        }).catch(fail);
       });
     });  // describe('keystatuseschange')
   });  // describe('events')
@@ -884,7 +987,7 @@ describe('DrmEngine', function() {
         session1.on['message']({ target: session1, message: message });
         session1.update.and.returnValue(Promise.resolve());
 
-        return shaka.test.Util.delay(0.1);
+        return shaka.test.Util.delay(0.5);
       }).then(function() {
         expect(session1.update).toHaveBeenCalledWith(license);
       }).catch(fail).then(done);
@@ -913,7 +1016,7 @@ describe('DrmEngine', function() {
         var message = new Uint8Array(0);
         session1.on['message']({ target: session1, message: message });
         session1.update.and.returnValue(Promise.resolve());
-        return shaka.test.Util.delay(0.1);
+        return shaka.test.Util.delay(0.5);
       }).then(function() {
         expect(session1.update.calls.count()).toBe(1);
         var licenseBuffer = session1.update.calls.argsFor(0)[0];
@@ -946,7 +1049,7 @@ describe('DrmEngine', function() {
         session1.on['message']({ target: session1, message: message });
         session1.update.and.throwError('whoops!');
 
-        return shaka.test.Util.delay(0.1);
+        return shaka.test.Util.delay(0.5);
       }).then(function() {
         expect(onErrorSpy).toHaveBeenCalled();
         var error = onErrorSpy.calls.argsFor(0)[0];
@@ -974,7 +1077,7 @@ describe('DrmEngine', function() {
         session2.on['message']({ target: session2, message: message });
         session2.update.and.returnValue(Promise.resolve());
 
-        return shaka.test.Util.delay(0.1);
+        return shaka.test.Util.delay(0.5);
       }).then(function() {
         mockVideo.setMediaKeys.calls.reset();
         return drmEngine.destroy();
@@ -1000,7 +1103,7 @@ describe('DrmEngine', function() {
         session2.on['message']({ target: session2, message: message });
         session2.update.and.returnValue(Promise.resolve());
 
-        return shaka.test.Util.delay(0.1);
+        return shaka.test.Util.delay(0.5);
       }).then(function() {
         session1.close.and.returnValue(Promise.reject());
         session2.close.and.returnValue(Promise.reject());
@@ -1023,7 +1126,7 @@ describe('DrmEngine', function() {
         session2.on['message']({ target: session2, message: message });
         session2.update.and.returnValue(Promise.resolve());
 
-        return shaka.test.Util.delay(0.1);
+        return shaka.test.Util.delay(0.5);
       }).then(function() {
         mockVideo.setMediaKeys.and.returnValue(Promise.reject());
         return drmEngine.destroy();
@@ -1038,7 +1141,7 @@ describe('DrmEngine', function() {
       // This chain should still return "success" when DrmEngine is destroyed.
       drmEngine.init(manifest, /* offline */ false).catch(fail);
 
-      shaka.test.Util.delay(0.3).then(function() {
+      shaka.test.Util.delay(1.0).then(function() {
         // The first query has been made, which we are blocking.
         expect(requestMediaKeySystemAccessSpy.calls.count()).toBe(1);
         expect(requestMediaKeySystemAccessSpy).toHaveBeenCalledWith(
@@ -1046,7 +1149,7 @@ describe('DrmEngine', function() {
         return drmEngine.destroy();
       }).then(function() {
         p.reject();  // Fail drm.abc.
-        return shaka.test.Util.delay(0.5);
+        return shaka.test.Util.delay(1.5);
       }).then(function() {
         // A second query was not made.
         expect(requestMediaKeySystemAccessSpy.calls.count()).toBe(1);
@@ -1062,7 +1165,7 @@ describe('DrmEngine', function() {
       // This chain should still return "success" when DrmEngine is destroyed.
       drmEngine.init(manifest, /* offline */ false).catch(fail);
 
-      shaka.test.Util.delay(0.3).then(function() {
+      shaka.test.Util.delay(1.0).then(function() {
         // The first query has been made, which we are blocking.
         expect(requestMediaKeySystemAccessSpy.calls.count()).toBe(1);
         expect(requestMediaKeySystemAccessSpy).toHaveBeenCalledWith(
@@ -1070,7 +1173,7 @@ describe('DrmEngine', function() {
         return drmEngine.destroy();
       }).then(function() {
         p.resolve();  // Success for drm.abc.
-        return shaka.test.Util.delay(0.5);
+        return shaka.test.Util.delay(1.5);
       }).then(function() {
         // Due to the interruption, we never created MediaKeys.
         expect(drmEngine.keySystem()).toBe('');
@@ -1086,13 +1189,13 @@ describe('DrmEngine', function() {
       // This chain should still return "success" when DrmEngine is destroyed.
       drmEngine.init(manifest, /* offline */ false).catch(fail);
 
-      shaka.test.Util.delay(0.3).then(function() {
+      shaka.test.Util.delay(1.0).then(function() {
         // We are blocked on createMediaKeys:
         expect(mockMediaKeySystemAccess.createMediaKeys).toHaveBeenCalled();
         return drmEngine.destroy();
       }).then(function() {
         p.resolve();  // Success for createMediaKeys().
-        return shaka.test.Util.delay(0.5);
+        return shaka.test.Util.delay(1.5);
       }).then(function() {
         // Due to the interruption, we never finished initialization.
         expect(drmEngine.initialized()).toBe(false);
@@ -1107,15 +1210,15 @@ describe('DrmEngine', function() {
       // This chain should still return "success" when DrmEngine is destroyed.
       initAndAttach().catch(fail);
 
-      shaka.test.Util.delay(0.3).then(function() {
+      shaka.test.Util.delay(1.0).then(function() {
         // We are now blocked on setMediaKeys:
         expect(mockVideo.setMediaKeys.calls.count()).toBe(1);
-        // DrmEngine also calls setMediaKeys.
+        // DrmEngine.destroy also calls setMediaKeys.
         var p2 = new shaka.util.PublicPromise();
         mockVideo.setMediaKeys.and.returnValue(p2);
         // Set timeouts to complete these calls.
-        shaka.test.Util.delay(0.1).then(p1.reject.bind(p1));   // Failure
-        shaka.test.Util.delay(0.2).then(p2.resolve.bind(p2));  // Success
+        shaka.test.Util.delay(0.5).then(p1.reject.bind(p1));   // Failure
+        shaka.test.Util.delay(1.0).then(p2.resolve.bind(p2));  // Success
         return drmEngine.destroy();
       }).catch(fail).then(done);
     });
@@ -1128,15 +1231,15 @@ describe('DrmEngine', function() {
       // This chain should still return "success" when DrmEngine is destroyed.
       initAndAttach().catch(fail);
 
-      shaka.test.Util.delay(0.3).then(function() {
+      shaka.test.Util.delay(1.0).then(function() {
         // We are now blocked on setMediaKeys:
         expect(mockVideo.setMediaKeys.calls.count()).toBe(1);
-        // DrmEngine also calls setMediaKeys.
+        // DrmEngine.destroy also calls setMediaKeys.
         var p2 = new shaka.util.PublicPromise();
         mockVideo.setMediaKeys.and.returnValue(p2);
         // Set timeouts to complete these calls.
-        shaka.test.Util.delay(0.1).then(p1.resolve.bind(p1));  // Success
-        shaka.test.Util.delay(0.2).then(p2.resolve.bind(p2));  // Success
+        shaka.test.Util.delay(0.5).then(p1.resolve.bind(p1));  // Success
+        shaka.test.Util.delay(1.0).then(p2.resolve.bind(p2));  // Success
         return drmEngine.destroy();
       }).then(function() {
         // Due to the interruption, we never listened for 'encrypted' events.
@@ -1156,13 +1259,13 @@ describe('DrmEngine', function() {
       // This chain should still return "success" when DrmEngine is destroyed.
       initAndAttach().catch(fail);
 
-      shaka.test.Util.delay(0.3).then(function() {
+      shaka.test.Util.delay(1.0).then(function() {
         // We are now blocked on setServerCertificate:
         expect(mockMediaKeys.setServerCertificate.calls.count()).toBe(1);
         return drmEngine.destroy();
       }).then(function() {
         p.reject();  // Fail setServerCertificate.
-        return shaka.test.Util.delay(0.5);
+        return shaka.test.Util.delay(1.5);
       }).catch(fail).then(done);
     });
 
@@ -1178,13 +1281,13 @@ describe('DrmEngine', function() {
       // This chain should still return "success" when DrmEngine is destroyed.
       initAndAttach().catch(fail);
 
-      shaka.test.Util.delay(0.3).then(function() {
+      shaka.test.Util.delay(1.0).then(function() {
         // We are now blocked on setServerCertificate:
         expect(mockMediaKeys.setServerCertificate.calls.count()).toBe(1);
         return drmEngine.destroy();
       }).then(function() {
         p.resolve();  // Success for setServerCertificate.
-        return shaka.test.Util.delay(0.5);
+        return shaka.test.Util.delay(1.5);
       }).then(function() {
         // Due to the interruption, we never listened for 'encrypted' events.
         expect(mockVideo.on['encrypted']).toBe(undefined);
@@ -1290,6 +1393,39 @@ describe('DrmEngine', function() {
       }).catch(fail).then(done);
       // onError is a failure by default.
     });
+
+    it('still completes if session is not callable', function(done) {
+      // Before, we would use |session.closed| as part of destroy().  However,
+      // this doesn't work if the session is not callable (no license request
+      // sent).  So |session.closed| should never resolve and |session.close()|
+      // should be rejected and destroy() should still succeed.
+      // https://github.com/google/shaka-player/issues/664
+      initAndAttach().then(function() {
+        session1.closed = new shaka.util.PublicPromise();
+        session2.closed = new shaka.util.PublicPromise();
+        session1.close.and.returnValue(Promise.reject());
+        session2.close.and.returnValue(Promise.reject());
+
+        var initData1 = new Uint8Array(1);
+        var initData2 = new Uint8Array(2);
+        mockVideo.on['encrypted'](
+            { initDataType: 'webm', initData: initData1 });
+        mockVideo.on['encrypted'](
+            { initDataType: 'webm', initData: initData2 });
+
+        // Still resolve these since we are mocking close and closed.  This
+        // ensures DrmEngine is in the correct state.
+        var message = new Uint8Array(0);
+        session1.on['message']({ target: session1, message: message });
+        session1.update.and.returnValue(Promise.resolve());
+        session2.on['message']({ target: session2, message: message });
+        session2.update.and.returnValue(Promise.resolve());
+
+        return shaka.test.Util.delay(0.5);
+      }).then(function() {
+        return drmEngine.destroy();
+      }).catch(fail).then(done);
+    });
   });  // describe('destroy')
 
   describe('getDrmInfo', function() {
@@ -1298,6 +1434,9 @@ describe('DrmEngine', function() {
           fakeRequestMediaKeySystemAccess.bind(null, ['drm.abc']));
       // Both audio and video with the same key system now:
       manifest.periods[0].streamSets[1].drmInfos[0].keySystem = 'drm.abc';
+      // Key IDs in manifest
+      manifest.periods[0].streamSets[1].drmInfos[0].keyIds[0] =
+          'deadbeefdeadbeefdeadbeefdeadbeef';
 
       config.advanced['drm.abc'] = {
         audioRobustness: 'good',
@@ -1318,7 +1457,8 @@ describe('DrmEngine', function() {
           audioRobustness: 'good',
           videoRobustness: 'really_really_ridiculously_good',
           serverCertificate: undefined,
-          initData: []
+          initData: [],
+          keyIds: ['deadbeefdeadbeefdeadbeefdeadbeef']
         });
       }).catch(fail).then(done);
     });
